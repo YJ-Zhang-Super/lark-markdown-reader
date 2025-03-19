@@ -1,1 +1,21 @@
 
+{
+  "name": {
+    "zh": "Markdown 阅读器",
+    "en": "Markdown Reader"
+  },
+  "description": {
+    "zh": "读取多维表格中的Markdown内容并渲染显示",
+    "en": "Read and render Markdown content from Base"
+  },
+  "icon": "public/icon.png",
+  "version": "0.0.1",
+  "main": "src/index.ts",
+  "ui": {
+    "height": 800,
+    "width": 600
+  },
+  "permissions": [
+    "base:*:read"
+  ]
+}
