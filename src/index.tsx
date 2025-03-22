@@ -1,202 +1,146 @@
-import { FieldType, bitable, UIBuilder } from "@lark-base-open/js-sdk";
-import { marked } from 'marked';
-import React, { useEffect, useState } from 'react';
-import ReactDOM from 'react-dom/client';
+import React, { useEffect, useState } from 'react'
+import ReactDOM from 'react-dom/client'
+import { bitable, ITextField } from '@lark-base-open/js-sdk';
+import { Alert, AlertProps, Spin, Typography, Button, Modal } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github.css';
+import './styles.css';
 
-// Markdown 阅读器组件
-const MarkdownReader: React.FC = () => {
-  const [tables, setTables] = useState<any[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string>('');
-  const [fields, setFields] = useState<any[]>([]);
-  const [selectedField, setSelectedField] = useState<string>('');
-  const [records, setRecords] = useState<any[]>([]);
-  const [selectedRecord, setSelectedRecord] = useState<string>('');
+const { Title, Text } = Typography;
+
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+  <React.StrictMode>
+    <MarkdownReader />
+  </React.StrictMode>
+)
+
+function MarkdownReader() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldId, setFieldId] = useState<string | null>(null);
   const [markdownContent, setMarkdownContent] = useState<string>('');
-  const [htmlContent, setHtmlContent] = useState<string>('');
-
-  // 初始化获取所有表格
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  
   useEffect(() => {
-    const loadTables = async () => {
+    const initializePlugin = async () => {
       try {
-        const tableList = await bitable.base.getTableList();
-        setTables(tableList);
-        if (tableList.length > 0) {
-          setSelectedTable(tableList[0].id);
+        // 获取当前选中的字段
+        const selection = await bitable.base.getSelection();
+        if (!selection.fieldId) {
+          setError('请选择一个文本字段');
+          setLoading(false);
+          return;
         }
-      } catch (error) {
-        console.error('获取表格列表失败:', error);
+        
+        setFieldId(selection.fieldId);
+        
+        // 获取字段信息
+        const table = await bitable.base.getActiveTable();
+        const field = await table.getFieldById(selection.fieldId);
+        const fieldMeta = await field.getMeta();
+        
+        // 检查字段类型是否为文本
+        if (fieldMeta.type !== 'Text') {
+          setError('请选择文本类型的字段');
+          setLoading(false);
+          return;
+        }
+        
+        // 获取单元格内容
+        if (selection.recordId) {
+          const textField = field as ITextField;
+          const cellValue = await textField.getValue(selection.recordId);
+          if (cellValue) {
+            setMarkdownContent(cellValue.toString());
+          }
+        }
+        
+        // 监听单元格内容变化
+        bitable.base.onSelectionChange(async (event) => {
+          if (event.data.fieldId && event.data.recordId) {
+            const newField = await table.getFieldById(event.data.fieldId);
+            const newFieldMeta = await newField.getMeta();
+            
+            if (newFieldMeta.type === 'Text') {
+              setFieldId(event.data.fieldId);
+              const textField = newField as ITextField;
+              const cellValue = await textField.getValue(event.data.recordId);
+              if (cellValue) {
+                setMarkdownContent(cellValue.toString());
+              } else {
+                setMarkdownContent('');
+              }
+            }
+          }
+        });
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('初始化插件失败:', err);
+        setError('初始化插件失败，请刷新页面重试');
+        setLoading(false);
       }
     };
     
-    loadTables();
+    initializePlugin();
   }, []);
-
-  // 当选择表格变化时，获取该表格的字段
-  useEffect(() => {
-    const loadFields = async () => {
-      if (!selectedTable) return;
-      
-      try {
-        const table = await bitable.base.getTableById(selectedTable);
-        const fieldList = await table.getFieldList();
-        // 只过滤出文本类型的字段，因为Markdown通常存储在文本字段中
-        const textFields = fieldList.filter(field => 
-          field.type === FieldType.Text || 
-          field.type === FieldType.MultilineText
-        );
-        
-        setFields(textFields);
-        if (textFields.length > 0) {
-          setSelectedField(textFields[0].id);
-        } else {
-          setSelectedField('');
-          setMarkdownContent('当前表格没有文本类型字段');
-        }
-      } catch (error) {
-        console.error('获取字段列表失败:', error);
-      }
-    };
-    
-    loadFields();
-  }, [selectedTable]);
-
-  // 当选择字段变化时，获取该字段的所有记录
-  useEffect(() => {
-    const loadRecords = async () => {
-      if (!selectedTable || !selectedField) return;
-      
-      try {
-        const table = await bitable.base.getTableById(selectedTable);
-        const recordList = await table.getRecordList();
-        setRecords(recordList);
-        if (recordList.length > 0) {
-          setSelectedRecord(recordList[0].id);
-        } else {
-          setSelectedRecord('');
-          setMarkdownContent('当前表格没有记录');
-        }
-      } catch (error) {
-        console.error('获取记录列表失败:', error);
-      }
-    };
-    
-    loadRecords();
-  }, [selectedTable, selectedField]);
-
-  // 当选择记录变化时，获取该记录的Markdown内容
-  useEffect(() => {
-    const loadMarkdownContent = async () => {
-      if (!selectedTable || !selectedField || !selectedRecord) return;
-      
-      try {
-        const table = await bitable.base.getTableById(selectedTable);
-        const field = await table.getFieldById(selectedField);
-        const cellValue = await table.getCellValue(selectedField, selectedRecord);
-        
-        if (cellValue) {
-          setMarkdownContent(String(cellValue));
-          // 将Markdown转换为HTML
-          setHtmlContent(marked(String(cellValue)));
-        } else {
-          setMarkdownContent('');
-          setHtmlContent('');
-        }
-      } catch (error) {
-        console.error('获取单元格内容失败:', error);
-      }
-    };
-    
-    loadMarkdownContent();
-  }, [selectedTable, selectedField, selectedRecord]);
-
+  
+  const toggleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+  };
+  
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <Spin tip="加载中..." />
+      </div>
+    );
+  }
+  
+  if (error) {
+    return <Alert message={error} type="error" />;
+  }
+  
   return (
-    <div style={{ padding: '16px' }}>
-      <h1>Markdown 阅读器</h1>
-      
-      <div style={{ marginBottom: '16px' }}>
-        <label>选择表格: </label>
-        <select 
-          value={selectedTable} 
-          onChange={(e) => setSelectedTable(e.target.value)}
-          style={{ width: '100%', padding: '8px', marginTop: '4px' }}
-        >
-          {tables.map(table => (
-            <option key={table.id} value={table.id}>{table.name}</option>
-          ))}
-        </select>
+    <div className="markdown-reader-container">
+      <div className="markdown-header">
+        <Title level={4}>Markdown 阅读器</Title>
+        <Button type="primary" onClick={toggleFullscreen}>
+          {isFullscreen ? '退出全屏' : '全屏查看'}
+        </Button>
       </div>
       
-      <div style={{ marginBottom: '16px' }}>
-        <label>选择字段: </label>
-        <select 
-          value={selectedField} 
-          onChange={(e) => setSelectedField(e.target.value)}
-          style={{ width: '100%', padding: '8px', marginTop: '4px' }}
-        >
-          {fields.map(field => (
-            <option key={field.id} value={field.id}>{field.name}</option>
-          ))}
-        </select>
+      <div className={`markdown-content ${isFullscreen ? 'fullscreen' : ''}`}>
+        {markdownContent ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw, rehypeHighlight]}
+          >
+            {markdownContent}
+          </ReactMarkdown>
+        ) : (
+          <Text type="secondary">选择一个包含 Markdown 内容的单元格</Text>
+        )}
       </div>
       
-      <div style={{ marginBottom: '16px' }}>
-        <label>选择记录: </label>
-        <select 
-          value={selectedRecord} 
-          onChange={(e) => setSelectedRecord(e.target.value)}
-          style={{ width: '100%', padding: '8px', marginTop: '4px' }}
-        >
-          {records.map((record, index) => (
-            <option key={record.id} value={record.id}>记录 {index + 1}</option>
-          ))}
-        </select>
-      </div>
-      
-      <div style={{ marginBottom: '16px' }}>
-        <h2>Markdown 源码</h2>
-        <div 
-          style={{ 
-            border: '1px solid #ccc', 
-            padding: '8px', 
-            borderRadius: '4px',
-            backgroundColor: '#f5f5f5',
-            whiteSpace: 'pre-wrap',
-            maxHeight: '200px',
-            overflowY: 'auto'
-          }}
+      <Modal
+        title="Markdown 全屏预览"
+        open={isFullscreen}
+        onCancel={toggleFullscreen}
+        footer={null}
+        width="80%"
+        bodyStyle={{ maxHeight: '80vh', overflow: 'auto' }}
+      >
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw, rehypeHighlight]}
         >
           {markdownContent}
-        </div>
-      </div>
-      
-      <div>
-        <h2>渲染结果</h2>
-        <div 
-          style={{ 
-            border: '1px solid #ccc', 
-            padding: '16px', 
-            borderRadius: '4px',
-            maxHeight: '400px',
-            overflowY: 'auto'
-          }}
-          dangerouslySetInnerHTML={{ __html: htmlContent }}
-        />
-      </div>
+        </ReactMarkdown>
+      </Modal>
     </div>
   );
-};
-
-// 插件入口
-export default async function main(uiBuilder: UIBuilder) {
-  uiBuilder.markdown(`
-  # Markdown 阅读器
-  
-  这个插件可以读取多维表格中的 Markdown 内容并渲染显示。
-  `);
-  
-  const container = document.createElement('div');
-  uiBuilder.html(container);
-  
-  const root = ReactDOM.createRoot(container);
-  root.render(React.createElement(MarkdownReader));
 }
